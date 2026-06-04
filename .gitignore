@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# 浏览器数据（含登录Cookie，不应提交）
+browser_data/
+cainiao_browser_data/
+
+# 运行时数据
+query_progress.json
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# 打包产物
+*.dmg
+*.app
+
+# ==================== 测试和调试文件 ====================
+debug_*
+test_*
+inspect_cols.py
+check_status.py
+
+# 调试输出
+*.png
+*_output.txt
+debug_*.json
+
+# 备份文件（乱码文件名的副本）
+*- ????.*
+* - ????.*
+
+# 中间研究数据
+col_info.json
+fields_current.json
+status_samples.json
+debug_listen_response.json
+debug_api_response.json
+debug_cn_api_response.json
+debug_fields_output.json
+
+# 旧方案文件（AirScript 等）
+airscript_cainiao.js
+AIRSCRIPT_SETUP.md
+cloudflare_worker/
+
+# 研究文档（非必要）
+WPS_DATA_READ_RESEARCH.md
+REVERSE_ENGINEERING.md
+PROJECT_NOTES.md
+plans/
