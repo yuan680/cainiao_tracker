@@ -69,9 +69,22 @@ class WPSTable:
         self.page.refresh(ignore_cache=True)
         time.sleep(12)
 
-        # 验证页面加载成功
-        if not self._check_ready():
-            raise RuntimeError("WPS表格加载失败，请检查网络或登录状态")
+        # 验证页面加载成功（循环等待，给用户扫码登录时间）
+        max_wait = 120  # 最多等待120秒
+        wait_interval = 5
+        elapsed = 0
+        while not self._check_ready():
+            if elapsed >= max_wait:
+                raise RuntimeError("WPS表格加载失败，请检查网络或登录状态")
+            logger.info(f"页面未就绪，等待中...（已等待{elapsed}秒，如需登录请在浏览器中操作）")
+            time.sleep(wait_interval)
+            elapsed += wait_interval
+            # 每30秒刷新一次看看是否登录成功
+            if elapsed % 30 == 0:
+                logger.info("尝试刷新页面...")
+                self.page.refresh(ignore_cache=True)
+                time.sleep(5)
+                elapsed += 5
 
         # 动态解析字段列索引
         self._resolve_field_indices()
