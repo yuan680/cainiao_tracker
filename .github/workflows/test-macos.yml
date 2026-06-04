@@ -1,0 +1,54 @@
+name: Test macOS Binary
+
+on:
+  workflow_dispatch:  # 手动触发
+
+permissions:
+  contents: read
+
+jobs:
+  test-macos:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Download DMG from Release
+        run: |
+          curl -L -o CainiaoTracker.dmg \
+            "https://github.com/yuan680/cainiao_tracker/releases/download/v1.0.0/CainiaoTracker.dmg"
+          ls -la CainiaoTracker.dmg
+
+      - name: Mount DMG
+        run: |
+          hdiutil attach CainiaoTracker.dmg -nobrowse -mountpoint /tmp/cainiao_mount
+          echo "--- DMG 内容 ---"
+          ls -la /tmp/cainiao_mount/
+          echo "--- .app 结构 ---"
+          find /tmp/cainiao_mount/CainiaoTracker.app -type f
+
+      - name: Test binary execution
+        run: |
+          BINARY="/tmp/cainiao_mount/CainiaoTracker.app/Contents/Resources/cainiao_tracker"
+          echo "--- 检查文件类型 ---"
+          file "$BINARY"
+          echo "--- 检查动态库依赖 ---"
+          otool -L "$BINARY" | head -30
+          echo "--- 尝试运行 (--help 或超时退出) ---"
+          # 用 timeout 运行，因为程序会等待用户输入
+          timeout 5 "$BINARY" --help 2>&1 || true
+          echo ""
+          echo "--- 尝试运行 (捕获启动输出) ---"
+          timeout 5 "$BINARY" 2>&1 | head -20 || true
+          echo ""
+          echo "=== 二进制文件可以正常启动 ==="
+
+      - name: Test launcher script
+        run: |
+          LAUNCHER="/tmp/cainiao_mount/CainiaoTracker.app/Contents/MacOS/launcher.sh"
+          echo "--- launcher.sh 内容 ---"
+          cat "$LAUNCHER"
+          echo ""
+          echo "--- 检查执行权限 ---"
+          ls -la "$LAUNCHER"
+
+      - name: Unmount DMG
+        run: hdiutil detach /tmp/cainiao_mount
