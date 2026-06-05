@@ -33,7 +33,7 @@ os.makedirs(APP_DATA_DIR, exist_ok=True)
 
 # ==================== WPS 多维表格配置 ====================
 # 你的多维表格分享URL
-WPS_TABLE_URL = "https://www.kdocs.cn/l/chCxXjbgCm86"
+WPS_TABLE_URL = "https://www.kdocs.cn/l/cbgp6R9K0snU"
 
 # 列配置（与表格实际列名对应，字段ID在wps_table.py中维护）
 COLUMN_TRACKING = "物流单号"        # col 0, 字段ID: B
