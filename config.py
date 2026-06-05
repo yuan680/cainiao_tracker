@@ -76,8 +76,5 @@ BROWSER_PATH = ""
 # 用户数据目录（保存登录Cookie，避免重复登录）
 USER_DATA_DIR = os.path.join(APP_DATA_DIR, 'browser_data')
 
-# ==================== 断点续查配置 ====================
-PROGRESS_FILE = "query_progress.json"
-
 # ==================== 日志配置 ====================
 LOG_FILE = "cainiao_tracker.log"

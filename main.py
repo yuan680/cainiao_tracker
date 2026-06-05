@@ -7,17 +7,20 @@
 3. 通过 DrissionPage 模拟网页批量查询菜鸟国际物流
 4. 批量写回查询结果
 
+查询策略：
+- 有单号 + 状态为空或非终态 → 查询
+- 状态为终态（妥投/退回签收） → 跳过
+- 不依赖断点进度，只看当前物流状态
+- 清空状态后重新运行即可全量重查
+
 使用方式：
-    python main.py              # 仅查询状态为空或异常的记录
-    python main.py --all        # 强制查询所有记录
+    python main.py              # 查询所有非终态记录
     python main.py --dry-run    # 仅读取，不查询不写入
-    python main.py --reset      # 重置进度，开始新一轮
 """
 
 import os
 import sys
 import time
-import json
 import random
 import logging
 import argparse
@@ -72,60 +75,9 @@ def setup_logging():
     )
 
 
-# ==================== 进度管理 ====================
-class ProgressTracker:
-    """断点续查 - 记录已完成的查询进度"""
-
-    def __init__(self):
-        self.progress_file = os.path.join(
-            config.APP_DATA_DIR,
-            config.PROGRESS_FILE
-        )
-        self.data = self._load()
-
-    def _load(self):
-        """加载进度文件"""
-        if os.path.exists(self.progress_file):
-            try:
-                with open(self.progress_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                pass
-        return {
-            'last_run': None,
-            'completed_records': [],
-            'total_queried': 0,
-            'total_written': 0,
-        }
-
-    def save(self):
-        """保存进度"""
-        with open(self.progress_file, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
-
-    def is_completed(self, record_id):
-        """检查记录是否已在本轮完成"""
-        return record_id in self.data['completed_records']
-
-    def mark_completed(self, record_ids):
-        """批量标记记录完成"""
-        for rid in record_ids:
-            if rid not in self.data['completed_records']:
-                self.data['completed_records'].append(rid)
-
-    def reset(self):
-        """重置进度（新一轮查询）"""
-        self.data = {
-            'last_run': datetime.now().isoformat(),
-            'completed_records': [],
-            'total_queried': 0,
-            'total_written': 0,
-        }
-        self.save()
-
 
 # ==================== 主流程 ====================
-def should_query(tracking_number, current_status, force_all=False):
+def should_query(tracking_number, current_status):
     """
     判断是否需要查询该记录
 
@@ -136,12 +88,12 @@ def should_query(tracking_number, current_status, force_all=False):
     终态（跳过）：
     - 以"妥投"开头的（如"妥投|用户已签收"）
     - "退回|退件签收成功"
+
+    注意：不依赖断点进度，只看当前物流状态。
+    如果用户清空了状态，下一轮就会重新查询。
     """
     if not tracking_number or not tracking_number.strip():
         return False
-
-    if force_all:
-        return True
 
     # 终态不再查询
     if current_status:
@@ -157,24 +109,27 @@ def should_query(tracking_number, current_status, force_all=False):
     return True
 
 
-def run(force_all=False, dry_run=False):
+def run(dry_run=False):
     """
     主运行流程
 
     参数:
-        force_all: 是否强制查询所有记录（包括已有状态的）
         dry_run: 仅读取表格，不查询不写入
+    
+    查询策略：
+    - 有单号 + 状态为空或非终态 → 查询
+    - 状态为终态（妥投/退回签收） → 跳过
+    - 不依赖断点进度，只看当前物流状态
     """
     logger = logging.getLogger(__name__)
     logger.info("=" * 60)
     logger.info("菜鸟国际物流批量查询 启动")
-    logger.info(f"模式: {'强制全量' if force_all else '增量更新'} | {'干跑(不写入)' if dry_run else '正常写入'}")
+    logger.info(f"模式: {'干跑(不写入)' if dry_run else '正常写入'}")
     logger.info("=" * 60)
 
     # 1. 连接 WPS 表格
     table = WPSTable()
     tracker = None
-    progress = ProgressTracker()
 
     try:
         table.connect()
@@ -188,20 +143,16 @@ def run(force_all=False, dry_run=False):
             logger.warning("表格为空，退出")
             return
 
-        # 3. 筛选需要查询的记录
+        # 3. 筛选需要查询的记录（仅看当前状态，不依赖断点进度）
         to_query = []
         skip_empty_tn = 0
         skip_toutou = 0
         skip_tuihui = 0
-        skip_completed = 0
         empty_status_count = 0
 
         for record_id, tracking_number, current_status in all_rows:
             if not current_status or current_status.strip() == '':
                 empty_status_count += 1
-            if progress.is_completed(record_id):
-                skip_completed += 1
-                continue
             if not tracking_number or not tracking_number.strip():
                 skip_empty_tn += 1
                 continue
@@ -214,8 +165,7 @@ def run(force_all=False, dry_run=False):
             to_query.append((record_id, tracking_number, current_status))
 
         logger.info(f"状态分布: 空白={empty_status_count}, 妥投*={skip_toutou}, "
-                    f"退回签收={skip_tuihui}, 空单号={skip_empty_tn}, "
-                    f"已完成={skip_completed}")
+                    f"退回签收={skip_tuihui}, 空单号={skip_empty_tn}")
         logger.info(f"需要查询的记录: {len(to_query)} / {len(all_rows)}")
 
         if not to_query:
@@ -290,9 +240,6 @@ def run(force_all=False, dry_run=False):
                     total_failed += 1
                     logger.debug(f"  [--] {tracking_numbers[i]}: 无数据")
 
-            # 标记已查询
-            progress.mark_completed(record_ids)
-
             # 批量写入 WPS 表格
             if batch_results:
                 logger.info(f"  写入 {len(batch_results)} 条结果到WPS表格...")
@@ -304,11 +251,6 @@ def run(force_all=False, dry_run=False):
                     logger.error(f"  写入失败!")
             else:
                 logger.info(f"  本批次无有效结果，跳过写入")
-
-            # 保存进度
-            progress.data['total_queried'] = total_queried
-            progress.data['total_written'] = total_written
-            progress.save()
 
             # 检查连续失败 - 可能遇到验证码
             if tracker.consecutive_failures >= config.PAUSE_AFTER_FAILURES:
@@ -336,11 +278,9 @@ def run(force_all=False, dry_run=False):
         logger.info("=" * 60)
 
     except KeyboardInterrupt:
-        logger.info("\n用户中断，保存进度...")
-        progress.save()
+        logger.info("\n用户中断")
     except Exception as e:
         logger.error(f"运行异常: {e}", exc_info=True)
-        progress.save()
     finally:
         # 关闭资源
         table.close()
@@ -351,19 +291,12 @@ def run(force_all=False, dry_run=False):
 def main():
     """命令行入口"""
     parser = argparse.ArgumentParser(description='菜鸟国际物流批量查询')
-    parser.add_argument('--all', action='store_true', help='强制查询所有记录（包括已有状态的）')
     parser.add_argument('--dry-run', action='store_true', help='仅读取表格，不查询不写入')
-    parser.add_argument('--reset', action='store_true', help='重置进度记录（开始新一轮）')
     args = parser.parse_args()
 
     setup_logging()
 
-    if args.reset:
-        progress = ProgressTracker()
-        progress.reset()
-        logging.info("进度已重置")
-
-    run(force_all=args.all, dry_run=args.dry_run)
+    run(dry_run=args.dry_run)
 
 
 if __name__ == '__main__':
