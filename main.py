@@ -21,16 +21,62 @@
 import os
 import sys
 import time
+import json
 import random
 import logging
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
 from wps_table import WPSTable
 from cainiao_query import CainiaoTracker
+
+
+# ==================== 试用期管理 ====================
+TRIAL_DAYS = 7
+TRIAL_FILE = os.path.join(config.APP_DATA_DIR, '.trial_info.json')
+
+
+def check_trial():
+    """
+    检查试用期是否有效（7天）
+    首次运行时自动记录激活时间
+    返回 (is_valid, days_remaining, activated_at)
+    """
+    now = datetime.now()
+
+    if os.path.exists(TRIAL_FILE):
+        try:
+            with open(TRIAL_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            activated_at = datetime.fromisoformat(data['activated_at'])
+        except (json.JSONDecodeError, KeyError, ValueError):
+            # 文件损坏，重新激活
+            activated_at = now
+            _save_trial(activated_at)
+    else:
+        # 首次运行，激活试用
+        activated_at = now
+        _save_trial(activated_at)
+
+    elapsed = now - activated_at
+    remaining = timedelta(days=TRIAL_DAYS) - elapsed
+    days_remaining = max(0, remaining.days)
+    is_valid = elapsed <= timedelta(days=TRIAL_DAYS)
+
+    return is_valid, days_remaining, activated_at
+
+
+def _save_trial(activated_at):
+    """保存试用激活信息"""
+    os.makedirs(os.path.dirname(TRIAL_FILE), exist_ok=True)
+    with open(TRIAL_FILE, 'w', encoding='utf-8') as f:
+        json.dump({
+            'activated_at': activated_at.isoformat(),
+            'trial_days': TRIAL_DAYS,
+        }, f, ensure_ascii=False, indent=2)
 
 
 def format_time(time_val):
@@ -122,8 +168,21 @@ def run(dry_run=False):
     - 不依赖断点进度，只看当前物流状态
     """
     logger = logging.getLogger(__name__)
+
+    # 试用期检查
+    is_valid, days_remaining, activated_at = check_trial()
+    if not is_valid:
+        logger.error("=" * 60)
+        logger.error("试用期已过期！")
+        logger.error(f"  激活时间: {activated_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.error(f"  试用期限: {TRIAL_DAYS} 天")
+        logger.error("  请联系开发者获取正式版本。")
+        logger.error("=" * 60)
+        return
+
     logger.info("=" * 60)
     logger.info("菜鸟国际物流批量查询 启动")
+    logger.info(f"试用期剩余: {days_remaining} 天（激活于 {activated_at.strftime('%Y-%m-%d')}）")
     logger.info(f"模式: {'干跑(不写入)' if dry_run else '正常写入'}")
     logger.info("=" * 60)
 
