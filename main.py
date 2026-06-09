@@ -16,14 +16,11 @@
 
 运行模式：
 - 默认为定时循环模式（每2小时自动查询一次）
-- 支持开机自启（macOS LaunchAgent）
 
 使用方式：
     python main.py              # 定时循环模式（每2小时查一次）
     python main.py --once       # 只查一次就退出
     python main.py --dry-run    # 仅读取，不查询不写入
-    python main.py --install    # 安装开机自启服务
-    python main.py --uninstall  # 卸载开机自启服务
 """
 
 import os
@@ -32,9 +29,6 @@ import time
 import random
 import logging
 import argparse
-import platform
-import subprocess
-import shutil
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,16 +37,8 @@ import config
 from wps_table import WPSTable
 from cainiao_query import CainiaoTracker
 
-
 # ==================== 定时配置 ====================
 LOOP_INTERVAL_HOURS = 2  # 每2小时查询一次
-
-# ==================== LaunchAgent 配置 ====================
-LAUNCH_AGENT_LABEL = "com.cainiaotracker.autoquery"
-LAUNCH_AGENT_PLIST = os.path.expanduser(
-    f"~/Library/LaunchAgents/{LAUNCH_AGENT_LABEL}.plist"
-)
-
 
 def format_time(time_val):
     """
@@ -72,7 +58,6 @@ def format_time(time_val):
         except (ValueError, OSError):
             return str(time_val)
     return str(time_val)
-
 
 # ==================== 日志配置 ====================
 def setup_logging():
@@ -94,8 +79,6 @@ def setup_logging():
         level=logging.INFO,
         handlers=[file_handler, stream_handler],
     )
-
-
 
 # ==================== 主流程 ====================
 def should_query(tracking_number, current_status):
@@ -128,7 +111,6 @@ def should_query(tracking_number, current_status):
 
     # 物流状态为空或非终态都需要查询
     return True
-
 
 def run(dry_run=False):
     """
@@ -308,131 +290,6 @@ def run(dry_run=False):
         if tracker:
             tracker.close()
 
-
-# ==================== LaunchAgent 管理 ====================
-def _get_executable_path():
-    """获取当前可执行文件路径"""
-    if getattr(sys, 'frozen', False):
-        # PyInstaller 打包后的可执行文件
-        return sys.executable
-    else:
-        # 开发模式：python 解释器 + 脚本
-        return os.path.abspath(__file__)
-
-
-def _generate_plist_content():
-    """生成 LaunchAgent plist 内容"""
-    exe_path = _get_executable_path()
-
-    if getattr(sys, 'frozen', False):
-        # 打包后：直接运行可执行文件
-        program_args = f"    <string>{exe_path}</string>"
-    else:
-        # 开发模式：python main.py
-        python_path = sys.executable
-        script_path = os.path.abspath(__file__)
-        program_args = f"    <string>{python_path}</string>\n    <string>{script_path}</string>"
-
-    log_path = os.path.join(config.APP_DATA_DIR, 'launchd_stdout.log')
-    err_path = os.path.join(config.APP_DATA_DIR, 'launchd_stderr.log')
-
-    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{LAUNCH_AGENT_LABEL}</string>
-
-    <key>ProgramArguments</key>
-    <array>
-{program_args}
-    </array>
-
-    <key>StartInterval</key>
-    <integer>{LOOP_INTERVAL_HOURS * 3600}</integer>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>StandardOutPath</key>
-    <string>{log_path}</string>
-
-    <key>StandardErrorPath</key>
-    <string>{err_path}</string>
-
-    <key>WorkingDirectory</key>
-    <string>{config.APP_DATA_DIR}</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
-    </dict>
-</dict>
-</plist>
-"""
-    return plist
-
-
-def install_launch_agent():
-    """安装 macOS LaunchAgent（开机自启 + 定时运行）"""
-    if platform.system() != 'Darwin':
-        print("LaunchAgent 仅支持 macOS")
-        return False
-
-    # 确保目录存在
-    os.makedirs(os.path.dirname(LAUNCH_AGENT_PLIST), exist_ok=True)
-
-    # 先卸载已有的（如果存在）
-    uninstall_launch_agent(quiet=True)
-
-    # 写入 plist
-    plist_content = _generate_plist_content()
-    with open(LAUNCH_AGENT_PLIST, 'w', encoding='utf-8') as f:
-        f.write(plist_content)
-
-    # 加载服务
-    result = subprocess.run(
-        ['launchctl', 'load', LAUNCH_AGENT_PLIST],
-        capture_output=True, text=True
-    )
-
-    if result.returncode == 0:
-        print("✓ 开机自启服务已安装")
-        print(f"  服务标识: {LAUNCH_AGENT_LABEL}")
-        print(f"  执行间隔: 每 {LOOP_INTERVAL_HOURS} 小时")
-        print(f"  配置文件: {LAUNCH_AGENT_PLIST}")
-        print(f"  日志目录: {config.APP_DATA_DIR}")
-        print("")
-        print("  服务将在开机时自动启动，并每2小时执行一次查询。")
-        return True
-    else:
-        print(f"✗ 安装失败: {result.stderr}")
-        return False
-
-
-def uninstall_launch_agent(quiet=False):
-    """卸载 macOS LaunchAgent"""
-    if platform.system() != 'Darwin':
-        if not quiet:
-            print("LaunchAgent 仅支持 macOS")
-        return False
-
-    if os.path.exists(LAUNCH_AGENT_PLIST):
-        subprocess.run(
-            ['launchctl', 'unload', LAUNCH_AGENT_PLIST],
-            capture_output=True, text=True
-        )
-        os.remove(LAUNCH_AGENT_PLIST)
-        if not quiet:
-            print("✓ 开机自启服务已卸载")
-        return True
-    else:
-        if not quiet:
-            print("未找到已安装的服务")
-        return False
-
-
 # ==================== 定时循环 ====================
 def run_loop(dry_run=False):
     """
@@ -466,25 +323,14 @@ def run_loop(dry_run=False):
             logger.info("\n用户中断，退出定时循环")
             break
 
-
 def main():
     """命令行入口"""
     parser = argparse.ArgumentParser(description='菜鸟国际物流批量查询')
     parser.add_argument('--once', action='store_true', help='只查一次就退出（不进入定时循环）')
     parser.add_argument('--dry-run', action='store_true', help='仅读取表格，不查询不写入')
-    parser.add_argument('--install', action='store_true', help='安装macOS开机自启服务')
-    parser.add_argument('--uninstall', action='store_true', help='卸载macOS开机自启服务')
     args = parser.parse_args()
 
     setup_logging()
-
-    if args.install:
-        install_launch_agent()
-        return
-
-    if args.uninstall:
-        uninstall_launch_agent()
-        return
 
     if args.once or args.dry_run:
         # 单次模式
@@ -492,7 +338,6 @@ def main():
     else:
         # 默认：定时循环模式
         run_loop(dry_run=args.dry_run)
-
 
 if __name__ == '__main__':
     main()
